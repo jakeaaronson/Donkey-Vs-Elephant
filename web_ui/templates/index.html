@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Donkey vs Elephant — Political Text Generation</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<!-- ===== Header ===== -->
+<header class="header">
+    <div class="header-brand">
+        <span class="emoji">&#x1FACF;</span>
+        Donkey vs Elephant
+        <span class="emoji">&#x1F418;</span>
+    </div>
+    <div class="header-status">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusLabel">Checking models&hellip;</span>
+    </div>
+</header>
+
+<!-- ===== Main ===== -->
+<main class="container">
+
+    <!-- Demo banner -->
+    <div class="demo-banner" id="demoBanner">
+        &#x26A0;&#xFE0F; <strong>Demo Mode</strong> &mdash; Trained models not found. Responses are placeholders. Train with:&nbsp;
+        <code>python -m model_training.train --both</code>
+    </div>
+
+    <!-- Prompt Configuration -->
+    <section class="card">
+        <h2 class="card-title">&#x2699;&#xFE0F; Prompt Configuration</h2>
+
+        <div class="prompt-group">
+            <label for="systemPrompt">System Prompt (Context)</label>
+            <div class="prompt-row">
+                <textarea id="systemPrompt" rows="2" placeholder="e.g. You are speaking to constituents.">You are speaking to constituents.</textarea>
+                <button class="btn-save" onclick="saveField('system')">Save System</button>
+            </div>
+        </div>
+
+        <div class="prompt-group">
+            <label for="topicPrompt">Topic Prompt</label>
+            <div class="prompt-row">
+                <textarea id="topicPrompt" rows="2" placeholder="e.g. Discuss healthcare policy.">You are speaking to constituents.</textarea>
+                <button class="btn-save" onclick="saveField('topic')">Save Prompt</button>
+            </div>
+        </div>
+
+        <div class="prompt-group">
+            <label for="userPrompt">User Prompt</label>
+            <div class="prompt-row">
+                <input type="text" id="userPrompt" placeholder="Hello, " value="Hello, ">
+            </div>
+        </div>
+    </section>
+
+    <!-- Generation Parameters -->
+    <section class="card">
+        <div class="sliders">
+            <div class="slider-group">
+                <label for="temperature">Temperature <span id="tempVal">0.90</span></label>
+                <input type="range" id="temperature" min="0.01" max="2" step="0.01" value="0.90">
+            </div>
+            <div class="slider-group">
+                <label for="maxLength">Max Length <span id="lenVal">150</span></label>
+                <input type="range" id="maxLength" min="10" max="512" step="1" value="150">
+            </div>
+            <div class="slider-group">
+                <label for="topK">Top K <span id="topkVal">50</span></label>
+                <input type="range" id="topK" min="0" max="100" step="1" value="50">
+            </div>
+        </div>
+    </section>
+
+    <!-- Generate Button -->
+    <div class="generate-row">
+        <button class="btn-generate" id="generateBtn" onclick="generate()">
+            <span class="btn-label">&#x2728; Generate Responses</span>
+            <span class="spinner"></span>
+        </button>
+    </div>
+
+    <!-- Responses -->
+    <section class="responses">
+        <!-- Democratic / Donkey -->
+        <div class="response-card dem">
+            <div class="response-header">
+                <span class="emoji">&#x1FACF;</span> Democratic Response
+            </div>
+            <div class="response-progress"><div class="bar" id="demBar"></div></div>
+            <div class="response-body" id="demResponse">
+                <span class="placeholder">Democratic model output will appear here.</span>
+            </div>
+        </div>
+
+        <!-- Republican / Elephant -->
+        <div class="response-card rep">
+            <div class="response-header">
+                <span class="emoji">&#x1F418;</span> Republican Response
+            </div>
+            <div class="response-progress"><div class="bar" id="repBar"></div></div>
+            <div class="response-body" id="repResponse">
+                <span class="placeholder">Republican model output will appear here.</span>
+            </div>
+        </div>
+    </section>
+
+</main>
+
+<footer class="footer">
+    Donkey vs Elephant &mdash; GPT-2 fine-tuned on Congressional speech data
+</footer>
+
+<!-- ===== Inline JS (no build step) ===== -->
+<script>
+(function () {
+    'use strict';
+
+    // ---- DOM refs ----
+    const $ = (id) => document.getElementById(id);
+    const systemPrompt = $('systemPrompt');
+    const topicPrompt  = $('topicPrompt');
+    const userPrompt   = $('userPrompt');
+    const tempSlider   = $('temperature');
+    const lenSlider    = $('maxLength');
+    const topkSlider   = $('topK');
+    const tempVal      = $('tempVal');
+    const lenVal       = $('lenVal');
+    const topkVal      = $('topkVal');
+    const generateBtn  = $('generateBtn');
+    const demResponse  = $('demResponse');
+    const repResponse  = $('repResponse');
+    const demBar       = $('demBar');
+    const repBar       = $('repBar');
+    const demoBanner   = $('demoBanner');
+    const statusDot    = $('statusDot');
+    const statusLabel  = $('statusLabel');
+
+    let demoMode = false;
+
+    // ---- Slider readouts ----
+    tempSlider.addEventListener('input', () => {
+        tempVal.textContent = parseFloat(tempSlider.value).toFixed(2);
+    });
+    lenSlider.addEventListener('input', () => {
+        lenVal.textContent = lenSlider.value;
+    });
+    topkSlider.addEventListener('input', () => {
+        topkVal.textContent = topkSlider.value;
+    });
+
+    // ---- Allow Enter key to trigger generation ----
+    userPrompt.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') { generate(); }
+    });
+
+    // ---- Health check on load ----
+    async function checkHealth() {
+        try {
+            const res = await fetch('/api/health');
+            const data = await res.json();
+            demoMode = data.demo_mode;
+
+            if (data.models.donkey && data.models.elephant) {
+                statusDot.className = 'status-dot';
+                statusLabel.textContent = 'Models loaded';
+            } else if (data.models.donkey || data.models.elephant) {
+                statusDot.className = 'status-dot demo';
+                const loaded = data.models.donkey ? 'Donkey' : 'Elephant';
+                statusLabel.textContent = loaded + ' only';
+            } else {
+                statusDot.className = 'status-dot demo';
+                statusLabel.textContent = 'Demo mode';
+            }
+
+            if (demoMode) {
+                demoBanner.classList.add('visible');
+            }
+        } catch (_) {
+            statusDot.className = 'status-dot demo';
+            statusLabel.textContent = 'Server error';
+        }
+    }
+    checkHealth();
+
+    // ---- Local storage for saved prompts ----
+    window.saveField = function (field) {
+        if (field === 'system') {
+            localStorage.setItem('dve_system', systemPrompt.value);
+        } else if (field === 'topic') {
+            localStorage.setItem('dve_topic', topicPrompt.value);
+        }
+        // Brief flash feedback
+        const btn = event.target;
+        const orig = btn.textContent;
+        btn.textContent = 'Saved!';
+        setTimeout(() => { btn.textContent = orig; }, 800);
+    };
+
+    // Restore saved prompts
+    const savedSys = localStorage.getItem('dve_system');
+    const savedTopic = localStorage.getItem('dve_topic');
+    if (savedSys !== null) systemPrompt.value = savedSys;
+    if (savedTopic !== null) topicPrompt.value = savedTopic;
+
+    // ---- Generate ----
+    window.generate = async function () {
+        generateBtn.classList.add('loading');
+        generateBtn.disabled = true;
+        demBar.className = 'bar loading';
+        repBar.className = 'bar loading';
+        demResponse.innerHTML = '<span class="placeholder">Generating&hellip;</span>';
+        repResponse.innerHTML = '<span class="placeholder">Generating&hellip;</span>';
+
+        const payload = {
+            system_prompt: systemPrompt.value,
+            topic_prompt: topicPrompt.value,
+            user_prompt: userPrompt.value,
+            temperature: parseFloat(tempSlider.value),
+            max_length: parseInt(lenSlider.value, 10),
+            top_k: parseInt(topkSlider.value, 10),
+        };
+
+        try {
+            const res = await fetch('/api/generate', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload),
+            });
+
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({}));
+                throw new Error(err.error || 'Server error ' + res.status);
+            }
+
+            const data = await res.json();
+            demResponse.textContent = data.donkey || '(empty response)';
+            repResponse.textContent = data.elephant || '(empty response)';
+
+            // Fill progress bars to completion
+            demBar.className = 'bar';
+            repBar.className = 'bar';
+            demBar.style.width = '100%';
+            repBar.style.width = '100%';
+
+        } catch (err) {
+            demResponse.innerHTML = '<span class="placeholder">Error: ' + escapeHtml(err.message) + '</span>';
+            repResponse.innerHTML = '<span class="placeholder">Error: ' + escapeHtml(err.message) + '</span>';
+            demBar.className = 'bar';
+            repBar.className = 'bar';
+        } finally {
+            generateBtn.classList.remove('loading');
+            generateBtn.disabled = false;
+        }
+    };
+
+    function escapeHtml(str) {
+        const div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+    }
+
+})();
+</script>
+
+</body>
+</html>

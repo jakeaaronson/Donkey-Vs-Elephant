@@ -1,0 +1,35 @@
+# Data & Models (too large for git)
+data/
+models/
+logs/
+*.bin
+*.safetensors
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+dist/
+build/
+venv/
+.venv/
+*.egg
+
+# Environment
+.env
+*.env.local
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Jupyter
+.ipynb_checkpoints/
