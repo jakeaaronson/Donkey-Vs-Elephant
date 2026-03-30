@@ -1,81 +1,78 @@
 """
 CLI entry point for the Congressional Record data collection pipeline.
 
+Uses the Stanford Congressional Record dataset (Gentzkow, Shapiro, & Taddy)
+which provides pre-parsed speeches with speaker metadata and party affiliation
+for the 97th-114th Congresses (1981-2016).
+
 Usage:
-    # Full pipeline: fetch raw data, then classify by party
+    # Full pipeline: download, extract, process
     python -m data_collection.run_collection
 
-    # Fetch only (skip classification)
-    python -m data_collection.run_collection --fetch-only
+    # Process only (assumes data already downloaded)
+    python -m data_collection.run_collection --process-only
 
-    # Classify only (assumes raw data already exists)
-    python -m data_collection.run_collection --classify-only
+    # Download only
+    python -m data_collection.run_collection --download-only
 
-    # Custom year range
-    python -m data_collection.run_collection --start-year 2020 --end-year 2024
-
-    # Skip downloading full article text (metadata only, much faster)
-    python -m data_collection.run_collection --no-text
+    # Custom congress range
+    python -m data_collection.run_collection --start-congress 110 --end-congress 114
 """
 
 import argparse
 import logging
 import sys
 import time
+from pathlib import Path
 
-from data_collection.congress_api import CongressAPI, DEFAULT_END_YEAR, DEFAULT_START_YEAR
-from data_collection.party_classifier import PartyClassifier
+from data_collection.stanford_loader import (
+    CONGRESS_RANGE,
+    download_dataset,
+    extract_dataset,
+    process_all,
+)
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Collect and classify Congressional Record speeches by party.",
+        description="Download and process Stanford Congressional Record dataset.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument(
-        "--start-year",
+        "--start-congress",
         type=int,
-        default=DEFAULT_START_YEAR,
-        help=f"First year to collect (default: {DEFAULT_START_YEAR})",
+        default=CONGRESS_RANGE.start,
+        help=f"First congress to process (default: {CONGRESS_RANGE.start})",
     )
     parser.add_argument(
-        "--end-year",
+        "--end-congress",
         type=int,
-        default=DEFAULT_END_YEAR,
-        help=f"Last year to collect (default: {DEFAULT_END_YEAR})",
+        default=CONGRESS_RANGE.stop - 1,
+        help=f"Last congress to process (default: {CONGRESS_RANGE.stop - 1})",
     )
     parser.add_argument(
-        "--api-key",
+        "--data-dir",
         type=str,
-        default=None,
-        help="Congress.gov API key (default: $CONGRESS_GOV_API_KEY)",
+        default=str(PROJECT_ROOT / "data"),
+        help="Base data directory (default: data/)",
     )
     parser.add_argument(
-        "--raw-dir",
-        type=str,
-        default="data/raw",
-        help="Directory for raw JSON output (default: data/raw)",
+        "--min-words",
+        type=int,
+        default=50,
+        help="Minimum word count per speech (default: 50)",
     )
     parser.add_argument(
-        "--processed-dir",
-        type=str,
-        default="data/processed",
-        help="Directory for classified JSONL output (default: data/processed)",
-    )
-    parser.add_argument(
-        "--fetch-only",
+        "--download-only",
         action="store_true",
-        help="Only fetch raw data, skip classification",
+        help="Only download the dataset, skip processing",
     )
     parser.add_argument(
-        "--classify-only",
+        "--process-only",
         action="store_true",
-        help="Only classify existing raw data, skip fetching",
-    )
-    parser.add_argument(
-        "--no-text",
-        action="store_true",
-        help="Skip downloading full article text (metadata only)",
+        help="Only process existing data, skip download",
     )
     parser.add_argument(
         "--verbose", "-v",
@@ -85,72 +82,25 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
-def run_fetch(args: argparse.Namespace) -> int:
-    """Fetch raw Congressional Record data from the API."""
-    print(f"\n{'='*60}")
-    print(f"  Fetching Congressional Record: {args.start_year}-{args.end_year}")
-    print(f"  Output: {args.raw_dir}/")
-    print(f"  Full text: {'no' if args.no_text else 'yes'}")
-    print(f"{'='*60}\n")
-
-    api = CongressAPI(
-        api_key=args.api_key,
-        output_dir=args.raw_dir,
-    )
-
-    start = time.time()
-    records = api.collect(
-        start_year=args.start_year,
-        end_year=args.end_year,
-        fetch_text=not args.no_text,
-    )
-    elapsed = time.time() - start
-
-    print(f"\nFetch complete: {len(records):,} articles in {elapsed:.0f}s")
-    return len(records)
-
-
-def run_classify(args: argparse.Namespace) -> dict[str, int]:
-    """Classify fetched records by party affiliation."""
-    print(f"\n{'='*60}")
-    print(f"  Classifying speeches by party")
-    print(f"  Input:  {args.raw_dir}/")
-    print(f"  Output: {args.processed_dir}/")
-    print(f"{'='*60}\n")
-
-    classifier = PartyClassifier(
-        raw_dir=args.raw_dir,
-        output_dir=args.processed_dir,
-        api_key=args.api_key,
-    )
-
-    start = time.time()
-    stats = classifier.classify()
-    elapsed = time.time() - start
-
-    print(f"\nClassification complete in {elapsed:.0f}s")
-    return stats
-
-
 def print_stats(stats: dict[str, int]) -> None:
-    """Print a summary table of classification results."""
+    """Print a summary table of processing results."""
     total = stats.get("total", 0)
     dem = stats.get("democratic", 0)
     rep = stats.get("republican", 0)
     other = stats.get("other", 0)
-    unresolved = stats.get("unresolved", 0)
-    classified = dem + rep
+    too_short = stats.get("too_short", 0)
 
     print(f"\n{'='*60}")
-    print(f"  Classification Results")
+    print(f"  Stanford Congressional Record — Processing Results")
     print(f"{'='*60}")
-    print(f"  Total articles processed:  {total:>8,}")
-    print(f"  Democratic speeches:       {dem:>8,}")
-    print(f"  Republican speeches:       {rep:>8,}")
-    print(f"  Other party:               {other:>8,}")
-    print(f"  Unresolved/skipped:        {unresolved:>8,}")
+    print(f"  Total speeches found:      {total:>10,}")
+    print(f"  Democratic speeches:       {dem:>10,}")
+    print(f"  Republican speeches:       {rep:>10,}")
+    print(f"  Other/unresolved:          {other:>10,}")
+    print(f"  Filtered (too short):      {too_short:>10,}")
     if total > 0:
-        print(f"  Classification rate:       {classified / total:>8.1%}")
+        classified = dem + rep
+        print(f"  Classification rate:       {classified / total:>10.1%}")
     print(f"{'='*60}\n")
 
 
@@ -163,20 +113,68 @@ def main(argv: list[str] | None = None) -> None:
         datefmt="%H:%M:%S",
     )
 
-    if args.fetch_only and args.classify_only:
-        print("Error: --fetch-only and --classify-only are mutually exclusive.")
+    if args.download_only and args.process_only:
+        print("Error: --download-only and --process-only are mutually exclusive.")
         sys.exit(1)
 
-    stats: dict[str, int] = {}
+    data_dir = Path(args.data_dir)
+    stanford_dir = data_dir / "stanford"
+    extract_dir = stanford_dir / "hein-daily"
+    processed_dir = data_dir / "processed"
 
-    if not args.classify_only:
-        run_fetch(args)
+    # Download
+    if not args.process_only:
+        print(f"\n{'='*60}")
+        print(f"  Downloading Stanford Congressional Record dataset")
+        print(f"  Output: {stanford_dir}/")
+        print(f"{'='*60}\n")
 
-    if not args.fetch_only:
-        stats = run_classify(args)
-        print_stats(stats)
+        start = time.time()
+        zip_path = download_dataset(stanford_dir)
+        elapsed = time.time() - start
+        print(f"Download step complete in {elapsed:.0f}s")
 
-    print("Done.")
+        # Extract — extract_dataset returns the actual data directory
+        print(f"\nExtracting to {extract_dir}/ ...")
+        extract_dir = extract_dataset(zip_path, extract_dir)
+    else:
+        # When process-only, find the actual data dir
+        nested = extract_dir / "hein-daily"
+        if nested.exists() and (nested / "speeches_114.txt").exists():
+            extract_dir = nested
+
+    if args.download_only:
+        print("Done (download only).")
+        return
+
+    # Process
+    congress_range = range(args.start_congress, args.end_congress + 1)
+    print(f"\n{'='*60}")
+    print(f"  Processing congresses {args.start_congress}-{args.end_congress}")
+    print(f"  Min words per speech: {args.min_words}")
+    print(f"  Output: {processed_dir}/")
+    print(f"{'='*60}\n")
+
+    start = time.time()
+    stats = process_all(
+        extract_dir=extract_dir,
+        output_dir=processed_dir,
+        congresses=congress_range,
+        min_words=args.min_words,
+    )
+    elapsed = time.time() - start
+
+    print_stats(stats)
+    print(f"Processing complete in {elapsed:.0f}s")
+
+    # Print file sizes
+    for name in ("democratic.jsonl", "republican.jsonl"):
+        path = processed_dir / name
+        if path.exists():
+            size_mb = path.stat().st_size / (1024 * 1024)
+            print(f"  {name}: {size_mb:.1f} MB")
+
+    print("\nDone.")
 
 
 if __name__ == "__main__":

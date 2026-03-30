@@ -1,77 +1,80 @@
 # data_collection
 
-Fetches Congressional Record speeches from the [Congress.gov API](https://api.congress.gov/) and splits them into Democratic and Republican training sets.
+Downloads and processes the [Stanford Congressional Record dataset](https://data.stanford.edu/congress_text) (Gentzkow, Shapiro, & Taddy) to produce party-labeled training data.
 
-## Setup
-
-1. Get a free API key at https://api.congress.gov/sign-up/
-2. Export it:
-   ```bash
-   export CONGRESS_GOV_API_KEY="your-key-here"
-   ```
+The Stanford dataset provides pre-parsed speeches from the 97th–114th Congresses (1981–2016) with speaker metadata including **party affiliation** already resolved — no fragile name-matching or API rate limits to deal with.
 
 ## Usage
 
-Run the full pipeline (fetch + classify):
+Run the full pipeline (download + extract + process):
 
 ```bash
 python -m data_collection.run_collection
 ```
 
+The first run downloads `hein-daily.zip` (~2.8 GB) from Stanford's servers.
+
 ### Options
 
 | Flag | Description |
 |------|-------------|
-| `--start-year` / `--end-year` | Year range to collect (default: 2000-2024) |
-| `--fetch-only` | Download raw data without classifying |
-| `--classify-only` | Classify already-downloaded data |
-| `--no-text` | Skip full article text (metadata only, much faster) |
-| `--api-key` | Pass API key directly instead of env var |
+| `--start-congress` / `--end-congress` | Congress range to process (default: 97-114) |
+| `--min-words` | Minimum word count per speech (default: 50) |
+| `--download-only` | Download and extract without processing |
+| `--process-only` | Process already-downloaded data |
 | `-v` | Verbose/debug logging |
 
 ### Examples
 
 ```bash
-# Quick test with a single year, no full text
-python -m data_collection.run_collection --start-year 2024 --end-year 2024 --no-text
+# Just the most recent congresses
+python -m data_collection.run_collection --start-congress 110 --end-congress 114
 
-# Fetch everything, then classify separately
-python -m data_collection.run_collection --fetch-only
-python -m data_collection.run_collection --classify-only
+# Download first, process later
+python -m data_collection.run_collection --download-only
+python -m data_collection.run_collection --process-only
 ```
 
 ## Output
 
 ```
 data/
-  raw/
-    cr_2000.json      # Raw article records per year
-    cr_2001.json
-    ...
-    members.json       # Cached member-to-party lookup
+  stanford/
+    hein-daily.zip         # Downloaded archive (2.8 GB)
+    hein-daily/            # Extracted files
+      speeches_097.txt     # Pipe-delimited speech text
+      097_SpeakerMap.txt   # Speaker metadata with party
+      ...
   processed/
-    democratic.jsonl   # One speech per line, ready for training
-    republican.jsonl
+    democratic.jsonl       # Dem speeches, ready for training
+    republican.jsonl       # GOP speeches, ready for training
 ```
 
 Each JSONL line contains:
 
 ```json
 {
-  "text": "Plain text of the speech...",
-  "speaker": "Mr. SMITH",
-  "party": "Republican",
-  "date": "2024-01-15T05:00:00Z",
-  "section": "Senate"
+  "text": "Full text of the speech...",
+  "speaker": "JOSEPH BIDEN",
+  "party": "Democratic",
+  "chamber": "S",
+  "state": "DE",
+  "congress": 98
 }
 ```
 
-## How it works
+## Data source
 
-1. **Fetch**: Iterates through daily Congressional Record issues via the API, downloading articles from House and Senate sections. Saves per-year JSON files so collection can resume after interruption.
+The Stanford dataset was compiled from the official Congressional Record using automated parsing of the printed/digitized volumes. Speaker attribution was resolved against the `congress-legislators` database with fuzzy matching on name, chamber, gender, state, and district.
 
-2. **Classify**: Builds a name-to-party index from the Members API (congresses 106-118). Extracts speaker names from article titles using pattern matching on Congressional Record conventions (`Mr. LASTNAME`, `Mrs. LASTNAME of State`, etc.). Strips HTML to plain text and writes party-labeled JSONL.
+- **Coverage**: 97th–114th Congress (1981–2016)
+- **Parser accuracy**: 99.7% correct speech boundary detection (daily edition)
+- **Speaker matching**: 92% name agreement rate (daily edition)
+- **Citation**: Gentzkow, M., Shapiro, J.M. and Taddy, M., 2019. "Measuring Group Differences in High-Dimensional Choices: Method and Application to Congressional Speech." *Econometrica*, 87(4), pp.1307-1340.
 
-## Rate limits
+## Legacy: Congress.gov API scraper
 
-The API allows roughly 1,000 requests per hour. The scraper uses a 0.5s delay between requests by default. A full 2000-2024 collection with text will take several days -- use `--no-text` for a faster metadata-only pass first.
+The original `congress_api.py` and `party_classifier.py` are retained for reference. They use the Congress.gov API to fetch recent data (post-2016), but are fragile due to:
+- No inline text in API responses (requires separate HTML fetches)
+- No speaker/party metadata in the API (requires name-matching heuristics)
+- Aggressive rate limits on the API

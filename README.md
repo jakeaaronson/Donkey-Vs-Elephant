@@ -65,7 +65,7 @@ Donkey-Vs-Elephant/
 ### Prerequisites
 - Python 3.10+
 - CUDA-capable GPU (recommended for training; CPU works for inference)
-- [Congress.gov API key](https://api.congress.gov/sign-up/) (free)
+- ~5 GB disk space for dataset + models
 
 ### Setup
 
@@ -73,9 +73,6 @@ Donkey-Vs-Elephant/
 git clone https://github.com/jakeaaronson/Donkey-Vs-Elephant.git
 cd Donkey-Vs-Elephant
 bash scripts/setup.sh
-
-# Add your API key
-echo "CONGRESS_API_KEY=your_key_here" > data_collection/.env
 ```
 
 ### Collect Data
@@ -83,11 +80,11 @@ echo "CONGRESS_API_KEY=your_key_here" > data_collection/.env
 ```bash
 source venv/bin/activate
 
-# Full collection (recommended — takes several hours)
-python -m data_collection.run_collection --start-year 2000 --end-year 2024
+# Full pipeline: download Stanford dataset (~2.8 GB), extract, and process
+python -m data_collection.run_collection
 
-# Or a smaller sample for testing
-python -m data_collection.run_collection --start-year 2020 --end-year 2024 --max-pages 100
+# Or just the most recent congresses
+python -m data_collection.run_collection --start-congress 110 --end-congress 114
 ```
 
 ### Train Models
@@ -129,14 +126,16 @@ Both models start from the same pretrained GPT-2 weights and are fine-tuned inde
 
 ## Data Source
 
-All training data comes from the [Congressional Record](https://www.congress.gov/congressional-record) via the official Congress.gov API. The Congressional Record is the official transcript of proceedings and debates of the U.S. Congress, published daily when Congress is in session.
+Training data comes from the [Stanford Congressional Record dataset](https://data.stanford.edu/congress_text) (Gentzkow, Shapiro, & Taddy, 2019), which provides pre-parsed speeches from the 97th–114th Congresses (1981–2016) with speaker metadata and party affiliation already resolved.
 
 The data collection pipeline:
-1. Fetches daily Congressional Record issues (2000–2024)
-2. Extracts individual speeches, remarks, and floor statements
-3. Identifies speakers and resolves their party affiliation via the Congress.gov Members API
-4. Splits the corpus into Democratic and Republican datasets
-5. Outputs clean JSONL files ready for tokenization
+1. Downloads `hein-daily.zip` (~2.8 GB) from Stanford's servers
+2. Extracts pipe-delimited speech files and speaker maps
+3. Joins speeches with speaker metadata (name, party, state, chamber)
+4. Filters short procedural entries (< 50 words)
+5. Splits into Democratic and Republican JSONL files for tokenization
+
+**Why Stanford over the Congress.gov API?** The API returns metadata and links — not text. Speaker attribution requires fragile name-matching heuristics. The Stanford dataset solves both problems: full text with party labels pre-resolved against the `congress-legislators` database (92% name agreement rate, 99.7% speech boundary accuracy).
 
 ## Tech Stack
 

@@ -1,11 +1,11 @@
 #!/bin/bash
-# Quick start: collect a small sample, train short runs, and launch the UI
+# Quick start: download data, train short runs, and launch the UI
 set -e
 
 source venv/bin/activate
 
-echo "=== Step 1: Collecting sample data (100 pages per party) ==="
-python -m data_collection.run_collection --start-year 2020 --end-year 2024 --max-pages 100
+echo "=== Step 1: Downloading and processing Stanford dataset ==="
+python -m data_collection.run_collection --start-congress 110 --end-congress 114
 
 echo ""
 echo "=== Step 2: Training models (quick 1-epoch run) ==="
